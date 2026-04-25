@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 900px; overflow: hidden; background: #000; }
+  #c { width: 1280px; height: 900px; display: block; }
+  #viewport {
+    width: 1280px; height: 900px;
+    overflow: hidden; position: relative;
+    background: #fff;
+    contain: strict;
+  }
+  #scroller {
+    width: 1280px; position: absolute; top: 0; left: 0;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c" width="1280" height="900" layoutsubtree>
+  <div id="viewport">
+    <div id="scroller"></div>
+  </div>
+</canvas>
+
+<script>
+var W = 1280, H = 900;
+var canvas = document.getElementById('c');
+var viewport = document.getElementById('viewport');
+var scroller = document.getElementById('scroller');
+var ctx = canvas.getContext('2d');
+var t0 = performance.now();
+var scrollY = 0;
+var paintOk = false;
+
+// Lava lamp blobs — wide orbits, 2x speed, mixed warm + accent colors
+var blobs = [
+  // warm core blobs
+  { cx: 0.5, cy: 0.5, r: 190, sx: 0.14, sy: 0.10, ox: 0.4, oy: 0.4, hBase: 15,  hRange: 12, phase: 0.0 },
+  { cx: 0.5, cy: 0.5, r: 160, sx: 0.18, sy: 0.12, ox: 0.35, oy: 0.38, hBase: 35, hRange: 10, phase: 1.1 },
+  { cx: 0.5, cy: 0.5, r: 210, sx: 0.10, sy: 0.16, ox: 0.38, oy: 0.35, hBase: 350, hRange: 15, phase: 2.3 },
+  { cx: 0.5, cy: 0.5, r: 170, sx: 0.16, sy: 0.08, ox: 0.42, oy: 0.42, hBase: 25,  hRange: 18, phase: 3.7 },
+  { cx: 0.5, cy: 0.5, r: 145, sx: 0.12, sy: 0.18, ox: 0.36, oy: 0.36, hBase: 5,   hRange: 14, phase: 4.9 },
+  { cx: 0.5, cy: 0.5, r: 180, sx: 0.20, sy: 0.14, ox: 0.4, oy: 0.38, hBase: 40,  hRange: 10, phase: 5.8 },
+  { cx: 0.5, cy: 0.5, r: 135, sx: 0.14, sy: 0.20, ox: 0.35, oy: 0.4, hBase: 355, hRange: 12, phase: 0.7 },
+  // new accent blobs — violet, teal
+  { cx: 0.5, cy: 0.5, r: 150, sx: 0.15, sy: 0.11, ox: 0.38, oy: 0.4, hBase: 280, hRange: 15, phase: 1.9 },
+  { cx: 0.5, cy: 0.5, r: 140, sx: 0.11, sy: 0.17, ox: 0.4, oy: 0.36, hBase: 175, hRange: 12, phase: 4.2 },
+];
+
+var lastPaintTime = 0;
+var avgFrameMs = 33;
+
+canvas.onpaint = function() {
+  var now = performance.now();
+  var dt = now - lastPaintTime;
+  lastPaintTime = now;
+  if (dt > 0 && dt < 500) avgFrameMs = avgFrameMs * 0.85 + dt * 0.15;
+  var slow = avgFrameMs > 66; // below ~15fps
+
+  var t = (now - t0) / 1000.0;
+  ctx.clearRect(0, 0, W, H);
+
+  // === Single drawElementImage: breathing page ===
+  ctx.save();
+  var breath = 1.0 + Math.sin(t * 0.7) * 0.02;
+  ctx.translate(W/2, H/2);
+  ctx.scale(breath, breath);
+  ctx.translate(-W/2, -H/2);
+  try {
+    ctx.drawElementImage(viewport, 0, 0, W, H);
+    paintOk = true;
+  } catch(e) { paintOk = false; }
+  ctx.restore();
+
+  // === Glitch: copy horizontal strips (skip when fps drops below 15) ===
+  if (!slow) {
+    var sliceH = 60;
+    for (var sy = 0; sy < H; sy += sliceH * 2) {
+      var shift = Math.sin(sy * 0.03 + t * 2.5) * 4 + Math.sin(sy * 0.09 + t * 7) * 1.5;
+      if (Math.abs(shift) > 0.5) {
+        ctx.drawImage(canvas, 0, sy, W, sliceH, shift, sy, W, sliceH);
+      }
+    }
+  }
+
+  // === Lava lamp blobs — warm colored circles drifting over the page ===
+  for (var i = 0; i < blobs.length; i++) {
+    var b = blobs[i];
+    var bx = b.cx * W + Math.sin(t * b.sx + b.phase) * W * b.ox;
+    var by = b.cy * H + Math.cos(t * b.sy + b.phase * 1.3) * H * b.oy;
+    var br = b.r + Math.sin(t * 0.25 + b.phase) * 40;
+    var bh = b.hBase + Math.sin(t * 0.2 + i) * b.hRange;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = 0.22 + Math.sin(t * 0.4 + i * 0.9) * 0.04;
+    var g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+    g.addColorStop(0, 'hsla(' + bh + ', 85%, 55%, 1)');
+    g.addColorStop(0.6, 'hsla(' + bh + ', 75%, 60%, 0.5)');
+    g.addColorStop(1, 'hsla(' + bh + ', 70%, 65%, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  canvas.requestPaint();
+};
+
+canvas.requestPaint();
+
+// Track full scroll height before we start hiding things
+var fullScrollHeight = 0;
+
+window.shellScroll = function(dy) {
+  scrollY = Math.max(0, scrollY + dy);
+  var maxScroll = Math.max(0, fullScrollHeight - H);
+  scrollY = Math.min(scrollY, maxScroll);
+  scroller.style.top = (-scrollY) + 'px';
+  cullOffscreen();
+};
+
+// Collect all leaf-ish block elements that we can individually cull
+var cullableEls = [];
+
+function collectCullable(root) {
+  var children = root.children;
+  for (var i = 0; i < children.length; i++) {
+    var el = children[i];
+    var tag = el.tagName;
+    if (tag === 'STYLE' || tag === 'LINK' || tag === 'SCRIPT') continue;
+    // If this element is tall (>2x viewport) and has children, recurse into it
+    if (el.offsetHeight > H * 2 && el.children.length > 0) {
+      collectCullable(el);
+    } else if (el.offsetHeight > 0) {
+      cullableEls.push(el);
+    }
+  }
+}
+
+function measureChildren() {
+  cullableEls = [];
+  collectCullable(scroller);
+  for (var i = 0; i < cullableEls.length; i++) {
+    var el = cullableEls[i];
+    // Walk offsetParent chain to get absolute top within scroller
+    var ot = 0;
+    var p = el;
+    while (p && p !== scroller) { ot += p.offsetTop; p = p.offsetParent; }
+    el._origTop = ot;
+    el._origBot = el._origTop + el.offsetHeight;
+  }
+  fullScrollHeight = scroller.scrollHeight;
+  cullOffscreen();
+}
+
+// Override cullOffscreen to use cullableEls
+function cullOffscreen() {
+  var margin = H;
+  var viewTop = scrollY - margin;
+  var viewBot = scrollY + H + margin;
+  for (var i = 0; i < cullableEls.length; i++) {
+    var el = cullableEls[i];
+    var top = el._origTop;
+    var bot = el._origBot;
+    if (top === undefined) continue;
+    if (bot < viewTop || top > viewBot) {
+      if (!el._culled) {
+        el._culled = true;
+        el._savedH = el.offsetHeight;
+        el.style.visibility = 'hidden';
+        el.style.height = el._savedH + 'px';
+        el.style.overflow = 'hidden';
+        // Clear inner content from paint tree
+        el.style.contentVisibility = 'hidden';
+      }
+    } else {
+      if (el._culled) {
+        el._culled = false;
+        el.style.visibility = '';
+        el.style.height = '';
+        el.style.overflow = '';
+        el.style.contentVisibility = '';
+      }
+    }
+  }
+}
+
+window.shellNavigate = function(html) {
+  scroller.innerHTML = '';
+  scrollY = 0;
+  scroller.style.top = '0px';
+  scroller.className = '';
+  scroller.removeAttribute('style');
+  scroller.style.cssText = 'width:1280px;position:absolute;top:0;left:0';
+
+  var parser = new DOMParser();
+  var doc = parser.parseFromString(html, 'text/html');
+
+  var styles = doc.querySelectorAll('style, link[rel="stylesheet"]');
+  styles.forEach(function(s) { scroller.appendChild(document.adoptNode(s)); });
+
+  if (doc.body) {
+    if (doc.body.getAttribute('style'))
+      scroller.style.cssText += ';' + doc.body.getAttribute('style');
+    if (doc.body.className)
+      scroller.className = doc.body.className;
+    while (doc.body.firstChild)
+      scroller.appendChild(document.adoptNode(doc.body.firstChild));
+  }
+
+  // Measure positions after a frame so layout is done
+  setTimeout(measureChildren, 100);
+  return { title: doc.title || '', children: scroller.children.length, height: scroller.scrollHeight };
+};
+
+window.shellGetTitle = function() { return ''; };
+window.shellReady = true;
+</script>
+</body>
+</html>

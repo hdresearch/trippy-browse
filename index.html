@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0f; font-family: system-ui, -apple-system, sans-serif; }
+
+  #toolbar {
+    display: flex; align-items: center;
+    height: 44px;
+    background: #12121a;
+    border-bottom: 1px solid #2a2a3a;
+    padding: 0 8px; gap: 6px;
+    z-index: 10;
+  }
+
+  .nav-btn {
+    background: #1a1a28; border: 1px solid #2a2a3a; color: #888;
+    width: 32px; height: 32px; border-radius: 6px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 15px; flex-shrink: 0; transition: all 0.15s;
+  }
+  .nav-btn:hover { background: #2a2a3a; color: #ccc; }
+
+  #url-bar {
+    flex: 1; height: 32px;
+    background: #18182a; border: 1px solid #2a2a3a; border-radius: 16px;
+    color: #ddd; font-size: 13px; padding: 0 14px; outline: none;
+  }
+  #url-bar:focus { border-color: #5566aa; background: #1e1e30; }
+
+  #fps { font-size: 11px; color: #444; flex-shrink: 0; min-width: 50px; text-align: right; }
+
+  #display {
+    width: 100%; height: calc(100% - 44px);
+    background: #0a0a0f;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; cursor: default;
+  }
+
+  #screen {
+    max-width: 100%; max-height: 100%;
+    image-rendering: auto;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button class="nav-btn" id="btn-back" title="Back">←</button>
+  <button class="nav-btn" id="btn-fwd" title="Forward">→</button>
+  <button class="nav-btn" id="btn-reload" title="Reload">↻</button>
+  <input type="text" id="url-bar" placeholder="Enter URL...">
+  <span id="fps"></span>
+</div>
+
+<div id="display">
+  <img id="screen" width="1280" height="900" alt="">
+</div>
+
+<script>
+const screen = document.getElementById('screen');
+const display = document.getElementById('display');
+const urlBar = document.getElementById('url-bar');
+const fpsEl = document.getElementById('fps');
+
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+// ---- Control WebSocket ----
+function connectControl() {
+  const ws = new WebSocket(`${wsProto}//${location.host}/api/control-ws`);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'status') {
+        if (document.activeElement !== urlBar) urlBar.value = msg.url || '';
+        document.title = msg.title || 'Browser';
+      }
+    } catch (err) {}
+  };
+  ws.onclose = () => setTimeout(connectControl, 2000);
+}
+connectControl();
+
+// ---- Display WebSocket (JPEG frames + input) ----
+let displayWs = null;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+function connectDisplay() {
+  displayWs = new WebSocket(`${wsProto}//${location.host}/api/display-ws`);
+  displayWs.binaryType = 'arraybuffer';
+
+  displayWs.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      const blob = new Blob([e.data], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const prev = screen.src;
+      screen.src = url;
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        fpsEl.textContent = frameCount + ' fps';
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+    }
+  };
+
+  displayWs.onclose = () => setTimeout(connectDisplay, 2000);
+}
+connectDisplay();
+
+// ---- Input forwarding ----
+function screenCoords(e) {
+  const rect = screen.getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - rect.left) / rect.width * 1280),
+    y: Math.round((e.clientY - rect.top) / rect.height * 900),
+  };
+}
+
+function sendInput(msg) {
+  if (displayWs && displayWs.readyState === WebSocket.OPEN) displayWs.send(JSON.stringify(msg));
+}
+
+display.addEventListener('mousedown', (e) => {
+  const { x, y } = screenCoords(e);
+  sendInput({ type: 'mouse', action: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+});
+display.addEventListener('mouseup', (e) => {
+  const { x, y } = screenCoords(e);
+  sendInput({ type: 'mouse', action: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+});
+display.addEventListener('mousemove', (e) => {
+  const { x, y } = screenCoords(e);
+  sendInput({ type: 'mouse', action: 'mouseMoved', x, y });
+});
+display.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const { x, y } = screenCoords(e);
+  sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (document.activeElement === urlBar) return;
+  e.preventDefault();
+  sendInput({ type: 'key', action: 'keyDown', key: e.key, code: e.code, keyCode: e.keyCode });
+  if (e.key.length === 1) sendInput({ type: 'key', action: 'char', key: e.key, code: e.code, text: e.key, keyCode: e.keyCode });
+});
+document.addEventListener('keyup', (e) => {
+  if (document.activeElement === urlBar) return;
+  sendInput({ type: 'key', action: 'keyUp', key: e.key, code: e.code, keyCode: e.keyCode });
+});
+
+// ---- Navigation ----
+function navigateTo(url) {
+  if (!url) return;
+  if (!url.match(/^[a-zA-Z]+:\/\//) && !url.startsWith('about:')) {
+    url = url.includes('.') && !url.includes(' ')
+      ? 'https://' + url
+      : 'https://www.google.com/search?q=' + encodeURIComponent(url);
+  }
+  fetch('/api/navigate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }).catch(console.error);
+}
+
+urlBar.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); navigateTo(urlBar.value.trim()); urlBar.blur(); }
+});
+document.getElementById('btn-back').addEventListener('click', () => fetch('/api/back', { method: 'POST' }));
+document.getElementById('btn-fwd').addEventListener('click', () => fetch('/api/forward', { method: 'POST' }));
+document.getElementById('btn-reload').addEventListener('click', () => fetch('/api/reload', { method: 'POST' }));
+</script>
+</body>
+</html>

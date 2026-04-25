@@ -1,0 +1,13 @@
+[machine]
+  mem_size_mib = 4096
+  vcpu_count = 4
+  fs_size_vm_mib = 8192
+
+[rootfs]
+  name = "default"
+
+[builder]
+  name = "none"
+
+[kernel]
+  name = "default.bin"
