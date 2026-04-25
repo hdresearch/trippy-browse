@@ -10,7 +10,6 @@
     width: 1280px; height: 900px;
     overflow: hidden; position: relative;
     background: #fff;
-    contain: strict;
   }
   #scroller {
     width: 1280px; position: absolute; top: 0; left: 0;
@@ -171,20 +170,14 @@ function cullOffscreen() {
     if (bot < viewTop || top > viewBot) {
       if (!el._culled) {
         el._culled = true;
-        el._savedH = el.offsetHeight;
+        // visibility:hidden keeps layout but skips painting
+        // DO NOT use content-visibility:hidden — it breaks drawElementImage on parent
         el.style.visibility = 'hidden';
-        el.style.height = el._savedH + 'px';
-        el.style.overflow = 'hidden';
-        // Clear inner content from paint tree
-        el.style.contentVisibility = 'hidden';
       }
     } else {
       if (el._culled) {
         el._culled = false;
         el.style.visibility = '';
-        el.style.height = '';
-        el.style.overflow = '';
-        el.style.contentVisibility = '';
       }
     }
   }
